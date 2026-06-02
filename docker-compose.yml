@@ -39,3 +39,17 @@ services:
       - FAILURE_RATE=0.0
       - ARTIFICIAL_LATENCY_MS=120
       - OUTAGE=false
+
+
+  producer: # Configuración de Producer que se construye a partir del Dockerfile en el directorio actual, con parámetros de entorno para conectarse a Kafka y al servicio de métricas.
+    build: .
+    command: uvicorn app.producer:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8102:8000"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - METRICS_URL=http://metrics:8000
+      - DEFAULT_TTL_SECONDS=300
+    depends_on:
+      - kafka
+      - metrics
