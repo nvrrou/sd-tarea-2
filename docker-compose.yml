@@ -53,3 +53,36 @@ services:
     depends_on:
       - kafka
       - metrics
+
+  sync_api: # Configuración de Sync API que se construye a partir del Dockerfile en el directorio actual, con parámetros de entorno para conectarse a Redis, al servicio responder y al servicio de métricas.
+    build: .
+    command: uvicorn app.sync_api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8103:8000"
+    environment:
+      - REDIS_HOST=redis
+      - RESPONDER_URL=http://responder:8000
+      - METRICS_URL=http://metrics:8000
+      - DEFAULT_TTL_SECONDS=300
+    depends_on:
+      - redis
+      - responder
+      - metrics
+
+  worker: # Configuración de Worker que se construye a partir del Dockerfile en el directorio actual, con parámetros de entorno para conectarse a Kafka, Redis, al servicio responder y al servicio de métricas, y con dependencias para asegurar que estos servicios estén disponibles antes de iniciar el worker.
+    build: .
+    command: python -m app.worker
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - REDIS_HOST=redis
+      - RESPONDER_URL=http://responder:8000
+      - METRICS_URL=http://metrics:8000
+      - CONSUMER_GROUP=geo-workers
+      - MAX_RETRIES=3
+      - RETRY_DELAY_SECONDS=2
+      - DEFAULT_TTL_SECONDS=300
+    depends_on:
+      - kafka
+      - redis
+      - responder
+      - metrics

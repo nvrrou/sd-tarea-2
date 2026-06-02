@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -16,19 +17,19 @@ DEFAULT_TTL_SECONDS = int(os.getenv("DEFAULT_TTL_SECONDS", "300"))
 app = FastAPI(title="Kafka Producer T2")
 producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
 
-# Función para enviar métricas al servicio de métricas, ignorando cualquier error que ocurra durante el envío
+
 def send_metric(payload: dict) -> None:
     try:
         httpx.post(f"{METRICS_URL}/event", json=payload, timeout=2.0)
     except Exception:
         pass
 
-# Endpoint de salud para verificar que el servicio está funcionando y que puede comunicarse con Kafka
+
 @app.get("/health")
 def health():
     return {"status": "ok", "kafka": KAFKA_BOOTSTRAP_SERVERS}
 
-# Endpoint para ejecutar una prueba de carga, generando eventos según los parámetros especificados
+
 @app.get("/run")
 def run(
     requests_count: int = Query(100, ge=1),
@@ -40,13 +41,26 @@ def run(
 ):
     started = time.perf_counter()
     delay = 1 / rate_per_second if rate_per_second > 0 else 0
+
     for _ in range(requests_count):
         query = build_query(distribution=distribution, alpha=alpha, ttl_seconds=ttl_seconds, scenario=scenario)
-        producer.produce(TOPIC_MAIN, key=stable_partition_key(query), value=query.model_dump_json())
+        producer.produce(
+            TOPIC_MAIN,
+            key=stable_partition_key(query),
+            value=query.model_dump_json(),
+        )
         send_metric(as_event("produced", query, topic=TOPIC_MAIN))
         producer.poll(0)
         if delay:
             time.sleep(delay)
+
     producer.flush()
     elapsed = time.perf_counter() - started
-    return {"published": requests_count, "elapsed_seconds": round(elapsed, 3)}
+    return {
+        "published": requests_count,
+        "topic": TOPIC_MAIN,
+        "distribution": distribution,
+        "scenario": scenario,
+        "elapsed_seconds": round(elapsed, 3),
+        "publish_rate_qps": round(requests_count / max(elapsed, 0.001), 3),
+    }

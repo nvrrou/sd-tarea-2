@@ -1,25 +1,29 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import random
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
 
-ZONES = ["Z1", "Z2", "Z3", "Z4", "Z5"] # Definir las zonas geográficas para clasificar los edificios, lo que permite distribuir el dataset en buckets y realizar consultas por zona
-QUERIES = ["Q1", "Q2", "Q3", "Q4", "Q5"] # Modelo de datos para las consultas, con campos para el tipo de consulta,
-CONFIDENCE_VALUES = [0.0, 0.5, 0.7, 0.9] # umbral de confianza, y otros parámetros necesarios para procesar las consultas y generar las respuestas adecuadas
-BINS_VALUES = [5, 10] # Número de bins para la consulta Q5, que solicita un histograma de la distribución de confianza en la zona, lo que permite analizar la calidad de los datos
+# Zonas y parametros usados para generar consultas aleatorias.
+ZONES = ["Z1", "Z2", "Z3", "Z4", "Z5"]
+QUERIES = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+CONFIDENCE_VALUES = [0.0, 0.5, 0.7, 0.9]
+BINS_VALUES = [5, 10]
 
-TOPIC_MAIN = "queries.main" # Definir los nombres de los topics de Kafka para la comunicación entre servicios, incluyendo el topic principal para las consultas, un topic de retry para reintentos, y un topic de DLQ para mensajes que no se pudieron procesar después de varios intentos
-TOPIC_RETRY = "queries.retry" # Topic para reintentos de consultas que fallaron, permitiendo implementar una lógica de reintentos con backoff y evitar perder consultas importantes debido a fallas temporales
-TOPIC_DLQ = "queries.dlq" # Topic de Dead Letter Queue para consultas que no se pudieron procesar después de varios intentos, lo que permite almacenar estos casos para análisis posterior y evitar perder información sobre consultas problemáticas
+# Topics de Kafka usados para consultas, reintentos y mensajes descartados.
+TOPIC_MAIN = "queries.main"
+TOPIC_RETRY = "queries.retry"
+TOPIC_DLQ = "queries.dlq"
 
-# Modelo de datos para las consultas, con campos para el tipo de consulta, 
-# zona, umbral de confianza, y otros parámetros necesarios para procesar las consultas y generar las respuestas adecuadas
+
+# Modelo comun para transportar una consulta entre servicios.
 class QueryMessage(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     query_type: str
@@ -33,7 +37,40 @@ class QueryMessage(BaseModel):
     ttl_seconds: int = 300
     scenario: str = "manual"
 
-# Función para calcular el área aproximada de una zona en kilómetros cuadrados, basada en las coordenadas de los edificios en esa zona
+
+@dataclass(frozen=True)
+# Modelo de datos para un edificio, con latitud, longitud, area en metros cuadrados y un valor de confianza.
+class ZoneBox:
+    lat_min: float
+    lat_max: float
+    lon_min: float
+    lon_max: float
+
+
+# Cajas geograficas aproximadas usadas para calcular areas por zona.
+ZONAS: dict[str, ZoneBox] = {
+    "Z1": ZoneBox(-33.445, -33.420, -70.640, -70.600),
+    "Z2": ZoneBox(-33.420, -33.390, -70.600, -70.550),
+    "Z3": ZoneBox(-33.530, -33.490, -70.790, -70.740),
+    "Z4": ZoneBox(-33.460, -33.430, -70.670, -70.630),
+    "Z5": ZoneBox(-33.470, -33.430, -70.810, -70.760),
+}
+
+
+# Calcula el area aproximada de una caja geografica en kilometros cuadrados.
+def area_km2(bbox: ZoneBox) -> float:
+    dlat = bbox.lat_max - bbox.lat_min
+    dlon = bbox.lon_max - bbox.lon_min
+    lat_media = math.radians((bbox.lat_min + bbox.lat_max) / 2)
+    km_por_grado_lat = 111.32
+    km_por_grado_lon = 111.32 * math.cos(lat_media)
+    return abs(dlat * km_por_grado_lat * dlon * km_por_grado_lon)
+
+# Precalcula el area de cada zona para usarlo en consultas de densidad, evitando calcularlo cada vez.
+ZONE_AREA_KM2 = {zone: area_km2(box) for zone, box in ZONAS.items()}
+
+
+# Genera consultas con distribucion uniforme o sesgada por Zipf.
 def choose_weighted(values: list[str], distribution: str, alpha: float = 1.2) -> str:
     if distribution == "zipf":
         ranks = np.arange(1, len(values) + 1)
@@ -42,44 +79,67 @@ def choose_weighted(values: list[str], distribution: str, alpha: float = 1.2) ->
         return str(np.random.choice(values, p=probabilities))
     return random.choice(values)
 
-# Función para construir una consulta de manera aleatoria, con opciones para diferentes distribuciones de selección y parámetros ajustables
-# Generacion aleatoria de consultas, en resumen.
+
+# Construye una consulta aleatoria con parametros validos para el tipo elegido.
 def build_query(distribution: str = "uniform", alpha: float = 1.2, ttl_seconds: int = 300, scenario: str = "manual") -> QueryMessage:
     query_type = choose_weighted(QUERIES, distribution, alpha)
     zone_id = choose_weighted(ZONES, distribution, alpha)
+    confidence_min = random.choice(CONFIDENCE_VALUES)
+    bins = random.choice(BINS_VALUES)
     zone_id_b = None
+
     if query_type == "Q4":
         zone_id_b = choose_weighted(ZONES, distribution, alpha)
         while zone_id_b == zone_id:
             zone_id_b = choose_weighted(ZONES, distribution, alpha)
+
     return QueryMessage(
         query_type=query_type,
         zone_id=zone_id,
         zone_id_b=zone_id_b,
-        confidence_min=random.choice(CONFIDENCE_VALUES),
-        bins=random.choice(BINS_VALUES),
+        confidence_min=confidence_min,
+        bins=bins,
         distribution=distribution,
         ttl_seconds=ttl_seconds,
         scenario=scenario,
     )
 
-# Construccion de la caché key
+
+# Construye una clave estable para cachear respuestas por tipo y parametros.
 def cache_key(query: QueryMessage) -> str:
-    return f"{query.query_type}:{query.zone_id}:{query.zone_id_b}:{query.confidence_min}:{query.bins}"
+    confidence = f"{query.confidence_min:.2f}"
+    if query.query_type == "Q1":
+        return f"count:{query.zone_id}:conf={confidence}"
+    if query.query_type == "Q2":
+        return f"area:{query.zone_id}:conf={confidence}"
+    if query.query_type == "Q3":
+        return f"density:{query.zone_id}:conf={confidence}"
+    if query.query_type == "Q4":
+        return f"compare:density:{query.zone_id}:{query.zone_id_b}:conf={confidence}"
+    if query.query_type == "Q5":
+        return f"confidence_dist:{query.zone_id}:bins={query.bins}"
+    raise ValueError(f"query_type invalido: {query.query_type}")
 
-# Generar clave de particion para kafka
+
+# Genera una clave de particion estable para Kafka.
 def stable_partition_key(query: QueryMessage) -> str:
-    return hashlib.sha1(cache_key(query).encode("utf-8")).hexdigest()
+    raw = cache_key(query).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()
 
-# Calcular percentiles en una lista
+
+# Calcula un percentil, retornando 0 si no hay datos.
 def percentile(values: list[float], p: float) -> float:
     if not values:
         return 0.0
     return float(np.percentile(values, p))
 
-# Construir un evento para métricas, con información relevante sobre la consulta y el contexto.
+
+# Construye eventos de metricas con contexto de la consulta.
 def as_event(event: str, query: QueryMessage | None = None, **extra: Any) -> dict[str, Any]:
-    payload = {"timestamp": time.time(), "event": event}
+    payload = {
+        "timestamp": time.time(),
+        "event": event,
+    }
     if query:
         payload.update(
             {
@@ -94,4 +154,3 @@ def as_event(event: str, query: QueryMessage | None = None, **extra: Any) -> dic
         )
     payload.update(extra)
     return payload
- 
