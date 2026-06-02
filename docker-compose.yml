@@ -26,6 +26,19 @@ services:
     ports:
       - "6379:6379"
 
+  metrics: # Configuración del servicio de métricas, que se construye a partir del Dockerfile en el directorio actual, con parámetros de entorno para especificar la ruta del archivo de métricas y la conexión a Kafka, y con una dependencia para asegurar que Kafka esté disponible antes de iniciar el servicio de métricas.
+    build: .
+    command: uvicorn app.metrics:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8100:8000"
+    volumes:
+      - ./results:/app/results
+    environment:
+      - METRICS_PATH=/app/results/events.csv
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      - kafka
+
   responder: # Configuración del servicio responder, que se construye a partir del Dockerfile en el directorio actual,
     build: .
     command: uvicorn app.responder:app --host 0.0.0.0 --port 8000
