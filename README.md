@@ -2,6 +2,17 @@
 
 Implementacion autocontenida de la segunda entrega. La carpeta no depende de los servicios de la Tarea 1, pero reutiliza el dominio de consultas Q1-Q5, distribuciones uniforme/Zipf, Redis como cache y un generador de respuestas.
 
+El sistema permite comparar directamente una arquitectura síncrona tradicional con una arquitectura orientada a eventos basada en Kafka, utilizando métricas de rendimiento y resiliencia para evaluar ambos enfoques.
+
+## ¿Por qué Apache Kafka?
+
+Uno de los principales desafíos de los sistemas distribuidos es evitar que una falla temporal provoque la pérdida de información o afecte el funcionamiento completo de la aplicación. Para abordar este problema, en esta tarea se incorporó Apache Kafka como mecanismo de comunicación entre los distintos componentes del sistema. Apache Kafka es una plataforma distribuida de transmisión de eventos (event streaming) diseñada para almacenar, procesar y distribuir grandes volúmenes de información de forma confiable y escalable. Su principal ventaja es que permite desacoplar productores y consumidores, evitando que ambos dependan directamente entre sí y facilitando la recuperación ante fallos, el procesamiento paralelo y el manejo de altas cargas de trabajo.
+
+En este proyecto Kafka se utiliza como intermediario entre el generador de consultas y los consumidores, permitiendo implementar reintentos automáticos, colas de recuperación (retry topics) y una Dead Letter Queue (DLQ) para consultas que no logran procesarse correctamente.
+
+Fuente: Apache Software Foundation, Apache Kafka Documentation.
+https://kafka.apache.org/
+
 ## Arquitectura
 
 - `producer`: genera consultas y las publica en `queries.main`.
