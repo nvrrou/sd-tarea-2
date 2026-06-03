@@ -63,6 +63,16 @@ def read_rows() -> list[dict[str, str]]:
     with METRICS_PATH.open("r", newline="", encoding="utf-8") as file:
         return list(csv.DictReader(file))
 
+# Obtiene la latencia extremo a extremo de una fila de métricas, usando latency_ms como respaldo para eventos antiguos.
+def row_latency_ms(row: dict[str, str]) -> float | None:
+    raw_latency = row.get("age_ms") or row.get("latency_ms")
+    if not raw_latency:
+        return None
+    try:
+        return float(raw_latency)
+    except ValueError:
+        return None
+
 # Construye una consulta con parámetros aleatorios basados en la distribución y el escenario especificados, para simular diferentes patrones de carga.
 def kafka_backlog() -> dict[str, Any]:
     consumer = Consumer(
@@ -115,7 +125,7 @@ def clear_events():
 def summary():
     rows = read_rows()
     completed = [r for r in rows if r["event"] in {"processed", "sync_processed"}]
-    latencies = [float(r["latency_ms"]) for r in completed if r["latency_ms"]]
+    latencies = [latency for r in completed if (latency := row_latency_ms(r)) is not None]
     retries = [r for r in rows if r["event"] == "retry"]
     recovered = [r for r in rows if r["event"] == "recovered"]
     dlq = [r for r in rows if r["event"] == "dlq"]
@@ -132,7 +142,7 @@ def summary():
     for scenario in sorted({r["scenario"] or "default" for r in rows}):
         scenario_rows = [r for r in rows if (r["scenario"] or "default") == scenario]
         scenario_completed = [r for r in scenario_rows if r["event"] in {"processed", "sync_processed"}]
-        scenario_lat = [float(r["latency_ms"]) for r in scenario_completed if r["latency_ms"]]
+        scenario_lat = [latency for r in scenario_completed if (latency := row_latency_ms(r)) is not None]
         by_scenario[scenario] = {
             "produced": sum(1 for r in scenario_rows if r["event"] == "produced"),
             "processed": len(scenario_completed),
