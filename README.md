@@ -14,6 +14,15 @@ Implementacion autocontenida de la segunda entrega. La carpeta no depende de los
 
 ## Ejecutar
 
+### Guia de Puertos
+
+- `9092`: Kafka, broker para los topics `queries.main`, `queries.retry` y `queries.dlq`.
+- `6379`: Redis, cache compartida entre `worker` y `sync_api`.
+- `8100`: Metrics, servicio para registrar eventos y consultar `/summary`.
+- `8101`: Responder, servicio que resuelve consultas Q1-Q5 y permite simular fallas con `/failure`.
+- `8102`: Producer, servicio para generar carga Kafka desde `/run`.
+- `8103`: Sync API, baseline sincronico sin Kafka desde `/run`.
+
 La imagen espera el dataset en la raiz de esta carpeta:
 
 ```bash
