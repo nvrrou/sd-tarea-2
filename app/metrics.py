@@ -63,9 +63,12 @@ def read_rows() -> list[dict[str, str]]:
     with METRICS_PATH.open("r", newline="", encoding="utf-8") as file:
         return list(csv.DictReader(file))
 
-# Obtiene la latencia extremo a extremo de una fila de métricas, usando latency_ms como respaldo para eventos antiguos.
+# Obtiene la latencia comparable para el resumen: sync usa el tiempo medido por la API y Kafka usa latencia extremo a extremo.
 def row_latency_ms(row: dict[str, str]) -> float | None:
-    raw_latency = row.get("age_ms") or row.get("latency_ms")
+    if row.get("event") == "sync_processed":
+        raw_latency = row.get("latency_ms") or row.get("age_ms")
+    else:
+        raw_latency = row.get("age_ms") or row.get("latency_ms")
     if not raw_latency:
         return None
     try:
