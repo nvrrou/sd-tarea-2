@@ -1,5 +1,5 @@
 # Tarea 2 - Procesamiento y Fallback con Apache Kafka
-
+# Link video: https://www.youtube.com/watch?v=LEcszCdBLrQ
 Implementacion autocontenida de la segunda entrega. La carpeta no depende de los servicios de la Tarea 1, pero reutiliza el dominio de consultas Q1-Q5, distribuciones uniforme/Zipf, Redis como cache y un generador de respuestas.
 
 El sistema permite comparar directamente una arquitectura síncrona tradicional con una arquitectura orientada a eventos basada en Kafka, utilizando métricas de rendimiento y resiliencia para evaluar ambos enfoques.
